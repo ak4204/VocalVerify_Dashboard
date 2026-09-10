@@ -1,14 +1,3 @@
----
-title: VocalVerify - Real-Time Voice Clone & Impersonation Defense
-emoji: 🛡️
-colorFrom: blue
-colorTo: indigo
-sdk: gradio
-sdk_version: 4.44.0
-app_file: app.py
-pinned: false
----
-
 # 🛡️ VocalVerify: Voice Intelligence Workspace & Telecom Call Guard
 
 VocalVerify is a dual-stream, multi-modal voice deepfake and acoustic impersonation detection engine. It delivers sub-50ms inference for real-time mobile telephony, streaming voice notes, and public figure video cross-verification.
