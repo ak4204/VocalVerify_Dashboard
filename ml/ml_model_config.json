@@ -1,0 +1,10 @@
+{
+    "model_name": "XGBoost",
+    "accuracy": 78.48,
+    "f1_score": 0.8421,
+    "cv_f1": "0.8765 \u00b1 0.0075",
+    "feature_count": 55,
+    "target_sr": 16000,
+    "target_length_sec": 3,
+    "split_method": "StratifiedGroupKFold (grouped by source recording, leak-safe)"
+}

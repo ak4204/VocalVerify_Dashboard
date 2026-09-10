@@ -1,0 +1,7 @@
+{
+    "model_architecture": "Meta Wav2Vec2-XLSR-53 + PyTorch Deep Neural Network",
+    "embedding_dim": 1024,
+    "accuracy": 91.98,
+    "f1_score": 0.9477,
+    "onnx_export": "wav2vec2_resnet_dl.onnx"
+}
