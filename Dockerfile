@@ -1,58 +1,27 @@
-# ==============================================================================
-# VocalVerify - Hugging Face Spaces Unified Dockerfile
-# Combines Next.js Frontend + FastAPI Dual-Stream Inference Engine + Nginx Proxy
-# ==============================================================================
-
 FROM python:3.11-slim-bookworm
 
-# Avoid interactive prompts during apt install
-ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
 
-# 1. Install system dependencies (FFmpeg for audio, Nginx for proxying port 7860)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    ffmpeg \
-    nginx \
-    build-essential \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# 2. Install Node.js 20.x LTS
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# 3. Create Hugging Face Space user (UID 1000)
-RUN useradd -m -u 1000 user
 WORKDIR /app
 
-# 4. Install Python backend dependencies
-COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
-# 5. Install Node.js dependencies
-COPY package.json package-lock.json* /app/
-RUN npm ci || npm install
+COPY backend/requirements.txt ./backend/requirements.txt
 
-# 6. Copy entire workspace
-COPY . /app
+RUN pip install --no-cache-dir -r ./backend/requirements.txt
 
-# 7. Build Next.js production bundle
-RUN npm run build
+COPY app.py ./app.py
+COPY backend ./backend
+COPY out ./out
+COPY ml ./ml
+COPY dl ./dl
 
-# 8. Create runtime directories and set ownership for Hugging Face user
-RUN mkdir -p /app/vault_cache /app/backend/vault_cache /app/backend/data /tmp/nginx /var/log/nginx /var/lib/nginx \
-    && chown -R user:user /app /tmp /var/log/nginx /var/lib/nginx \
-    && chmod +x /app/start.sh
+RUN mkdir -p /app/backend/data /app/vault_cache
 
-# Switch to non-root Hugging Face user
-USER user
+EXPOSE 8080
 
-# 9. Expose Hugging Face Space single port (7860)
-ENV PORT=7860
-EXPOSE 7860
-
-# Start FastAPI, Next.js, and Nginx
-CMD ["/app/start.sh"]
+CMD ["python", "app.py"]
