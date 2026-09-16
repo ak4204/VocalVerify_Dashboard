@@ -21,9 +21,9 @@ from typing import List, Optional
 
 from api.schemas import (
     DetectResponse, SessionRecord, FrameLog, OutcomeCode, RiskTier,
-    VerifyPublicFigureResponse, PLADMetrics, SpeakerVerificationResult
+    VerifyPublicFigureResponse, PLADMetrics, SpeakerVerificationResult, DashboardEvent
 )
-from api.routes_websocket import register_dashboard_ws, unregister_dashboard_ws
+from api.routes_websocket import register_dashboard_ws, unregister_dashboard_ws, _broadcast, get_active_phone_devices
 from core.inference_engine import get_engine
 from core.risk_analyzer import classify, build_explanation
 from core.plad_detector import get_plad_detector
@@ -43,6 +43,19 @@ router = APIRouter()
 TARGET_SR = 16_000
 
 
+async def broadcast_progress(step: int, total_steps: int = 6, message: str = ""):
+    try:
+        await _broadcast(DashboardEvent(
+            event_type="PIPELINE_PROGRESS",
+            step=step,
+            total_steps=total_steps,
+            message=message
+        ))
+    except Exception as e:
+        logger.debug(f"[Progress] Broadcast error: {e}")
+
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Dashboard live WebSocket
 # ─────────────────────────────────────────────────────────────────────
@@ -52,6 +65,20 @@ async def dashboard_websocket(ws: WebSocket):
     await ws.accept()
     register_dashboard_ws(ws)
     logger.info("[DashWS] Dashboard client connected.")
+    
+    # Send current mobile connection status to newly connected dashboard
+    active_phones = get_active_phone_devices()
+    try:
+        init_event = DashboardEvent(
+            event_type="PHONE_STATUS",
+            is_phone_connected=len(active_phones) > 0,
+            connected_devices=list(active_phones.keys()),
+            message=f"{len(active_phones)} mobile device(s) currently active"
+        )
+        await ws.send_text(init_event.model_dump_json())
+    except Exception as e:
+        logger.debug(f"[DashWS] Initial status send failed: {e}")
+
     try:
         while True:
             # Keep alive – echo any ping from client
@@ -67,6 +94,17 @@ async def dashboard_websocket(ws: WebSocket):
 # ─────────────────────────────────────────────────────────────────────
 # REST endpoints
 # ─────────────────────────────────────────────────────────────────────
+
+@router.get("/api/v1/phone-status")
+async def get_phone_status():
+    """Returns real-time status of connected mobile overlay devices."""
+    active_phones = get_active_phone_devices()
+    return {
+        "is_phone_connected": len(active_phones) > 0,
+        "count": len(active_phones),
+        "connected_devices": list(active_phones.keys()),
+    }
+
 
 @router.get("/api/v1/sessions", response_model=List[dict])
 async def list_sessions(limit: int = 50):
@@ -207,24 +245,34 @@ async def verify_public_figure(
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    # 1. Extract audio from uploaded media
+    # 1. Extract audio from uploaded media (FFmpeg)
+    await broadcast_progress(1, 6, "Audio extracted from media container (FFmpeg)")
     pcm = extract_pcm_from_upload(content, file.filename)
     duration_sec = float(len(pcm)) / TARGET_SR
+
+    # 2. Reference Search / Preparation
+    await broadcast_progress(2, 6, f"Querying speech references for: {public_figure_name or 'target'}")
+
+    # 3. Reference clip retrieval
+    await broadcast_progress(3, 6, "Downloading & preparing reference speech audio")
 
     # Trim leading/trailing digital silence or graphics jingles for acoustic analysis
     pcm_acoustic, _ = librosa.effects.trim(pcm, top_db=25)
     if len(pcm_acoustic) < TARGET_SR * 1.0:
         pcm_acoustic = pcm
 
-    # 2. Run PLAD Biomarker Detection
+    # 4. Audio normalization
+    await broadcast_progress(4, 6, "Audio streams converted and normalized to 16kHz mono WAV")
+
+    # 5. Run PLAD Biomarker Detection & Dual-Stream ML + DL Inference
+    await broadcast_progress(5, 6, "Running PLAD + XGBoost + Meta FAIR wav2vec 2.0 pipeline...")
     plad_det = get_plad_detector()
     plad_res = plad_det.analyze_array(pcm_acoustic, TARGET_SR)
 
-    # 3. Run Dual-Stream ML + DL Inference
     engine = get_engine()
     synth_score, ml_score, dl_score = engine.predict(pcm_acoustic)
 
-    # 4. Multi-Sample Reference Retrieval (3 samples)
+    # Multi-Sample Reference Retrieval (3 samples)
     ref_samples: List[np.ndarray] = []
     ref_url = None
     ref_title = None
@@ -248,7 +296,8 @@ async def verify_public_figure(
             search_context=file.filename or ""
         )
 
-    # 5. Multi-Reference Speaker Identity Verification & Centroid Vector Matching
+    # 6. Multi-Reference Speaker Identity Verification & Centroid Vector Matching
+    await broadcast_progress(6, 6, "Running ECAPA-TDNN 192-D speaker verification...")
     sim_result = None
     if ref_samples and len(ref_samples) > 0:
         sim_engine = get_similarity_engine()

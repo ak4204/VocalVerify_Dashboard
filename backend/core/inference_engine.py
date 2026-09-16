@@ -151,9 +151,14 @@ class VoiceAnalysisEngine:
     def _compute_acoustic_synthetic_indicator(self, pcm: np.ndarray) -> float:
         """
         Evaluates physical acoustic biomarkers of speech synthesis:
-        - Spectral Centroid STD (AI voices compress frequency range, std < 500)
-        - Spectral Flatness (AI vocoders lack chaotic airflow noise, flat < 0.03)
+        - Spectral Centroid STD (AI voices compress frequency range)
+        - Spectral Flatness (AI vocoders lack chaotic airflow noise)
         - Zero Crossing Rate STD (synthetic signals exhibit uniform cycle rates)
+
+        NOTE: Thresholds are calibrated for NARROWBAND phone audio (300–3400 Hz).
+        Phone calls naturally have lower centroid_std than studio audio; using
+        broadband thresholds would flag every real call as fake.
+
         Returns: P(fake) in [0.05, 0.95]
         """
         if len(pcm) < TARGET_SR * 0.5:
@@ -169,9 +174,16 @@ class VoiceAnalysisEngine:
             flat = float(np.mean(librosa.feature.spectral_flatness(y=pcm_trim)[0]))
             zcr = float(np.std(librosa.feature.zero_crossing_rate(pcm_trim)[0]))
 
-            s_cent = max(0.0, min(1.0, (800.0 - cent_std) / 500.0))
-            s_flat = max(0.0, min(1.0, (0.05 - flat) / 0.04))
-            s_zcr  = max(0.0, min(1.0, (0.12 - zcr) / 0.08))
+            # Narrowband phone audio threshold (300-3400 Hz band-limited):
+            # Real phone voices: cent_std ~150-350 Hz (not 500-800 Hz like studio)
+            # AI TTS over phone: cent_std ~50-150 Hz (even more compressed/flat)
+            s_cent = max(0.0, min(1.0, (300.0 - cent_std) / 250.0))
+
+            # Spectral flatness: AI TTS is unusually flat (< 0.01), real voice > 0.02
+            s_flat = max(0.0, min(1.0, (0.025 - flat) / 0.020))
+
+            # ZCR std: TTS is extremely uniform (< 0.04 std), real voice ~0.06-0.12
+            s_zcr  = max(0.0, min(1.0, (0.06 - zcr) / 0.05))
 
             acoustic_synth = 0.40 * s_cent + 0.35 * s_flat + 0.25 * s_zcr
             return float(np.clip(acoustic_synth, 0.05, 0.95))
@@ -194,7 +206,10 @@ class VoiceAnalysisEngine:
             # classes_ = [0, 1] where 1 = fake
             raw_ml = float(proba[1])
             ac_synth = self._compute_acoustic_synthetic_indicator(pcm)
-            return float(np.clip(0.45 * raw_ml + 0.55 * ac_synth, 0.05, 0.95))
+            # ac_synth is a supporting heuristic, not the primary signal.
+            # Let the trained ML model carry most weight (70%) so real phone
+            # calls are not falsely flagged by the heuristic alone.
+            return float(np.clip(0.70 * raw_ml + 0.30 * ac_synth, 0.05, 0.95))
         except Exception as e:
             logger.error(f"[Engine] ML predict error: {e}")
             return self._heuristic_score(pcm)
@@ -247,7 +262,10 @@ class VoiceAnalysisEngine:
                 raw_dl = float(proba[1] if len(proba) > 1 else proba[0])
 
             ac_synth = self._compute_acoustic_synthetic_indicator(pcm)
-            return float(np.clip(0.35 * raw_dl + 0.65 * ac_synth, 0.05, 0.95))
+            # ac_synth is a supporting heuristic, not the primary signal.
+            # Let the trained DL model carry most weight (70%) so real phone
+            # calls are not falsely flagged by the heuristic alone.
+            return float(np.clip(0.70 * raw_dl + 0.30 * ac_synth, 0.05, 0.95))
 
         except Exception as e:
             logger.error(f"[Engine] DL predict error: {e}")

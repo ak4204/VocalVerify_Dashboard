@@ -26,24 +26,29 @@ class RiskTier(str, Enum):
 # ─────────────────────────────────────────────
 
 class TelecomMetadata(BaseModel):
-    caller_number: str
-    call_direction: Literal["INBOUND", "OUTBOUND"] = "INBOUND"
-    codec: str = "AMR-WB"
-    timestamp: int
+    caller_number: Optional[str] = "Unknown Caller"
+    call_direction: Optional[str] = "INBOUND"
+    codec: Optional[str] = "AMR-WB"
+    timestamp: Optional[int | float | str] = None
 
 
 class AudioPayload(BaseModel):
-    sample_rate: int = 16000
-    encoding: str = "PCM_16BIT"
-    audio_bytes_base64: str
+    sample_rate: Optional[int] = 16000
+    encoding: Optional[str] = "PCM_16BIT"
+    audio_bytes_base64: Optional[str] = None
 
 
 class InboundFrame(BaseModel):
-    session_id: str
-    device_id: str
+    session_id: Optional[str] = None
+    device_id: Optional[str] = "unknown_device"
     target_profile_id: Optional[str] = None
-    telecom_metadata: TelecomMetadata
-    audio_payload: AudioPayload
+    telecom_metadata: Optional[TelecomMetadata] = Field(default_factory=TelecomMetadata)
+    audio_payload: Optional[AudioPayload] = None
+    # Support top-level audio keys directly sent by apps
+    audio_bytes_base64: Optional[str] = None
+    audio: Optional[str] = None
+    pcm: Optional[str] = None
+
 
 
 # ─────────────────────────────────────────────
@@ -106,11 +111,21 @@ class FrameLog(BaseModel):
 # ─────────────────────────────────────────────
 
 class DashboardEvent(BaseModel):
-    event_type: Literal["NEW_VERDICT", "SESSION_START", "SESSION_END"] = "NEW_VERDICT"
-    session_id: str
-    device_id: str
-    caller_number: str
-    verdict: VerdictResponse
+    event_type: Literal[
+        "NEW_VERDICT", "SESSION_START", "SESSION_END", "PIPELINE_PROGRESS",
+        "PHONE_CONNECTED", "PHONE_DISCONNECTED", "PHONE_STATUS"
+    ] = "NEW_VERDICT"
+    session_id: Optional[str] = ""
+    device_id: Optional[str] = ""
+    caller_number: Optional[str] = ""
+    verdict: Optional[VerdictResponse] = None
+    step: Optional[int] = None
+    total_steps: Optional[int] = None
+    message: Optional[str] = None
+    is_phone_connected: Optional[bool] = None
+    connected_devices: Optional[List[str]] = None
+
+
 
 
 # ─────────────────────────────────────────────

@@ -25,15 +25,61 @@ export default function Home() {
 
   const renderView = () => {
     switch (vocalVerify.activeView) {
-      case "home": return <HomeView {...vocalVerify} />;
-      case "call_verify": return <CallVerifyResult {...vocalVerify} />;
-      case "fake_video": return <FakeVideoAnalysis {...vocalVerify} />;
-      case "saved_scans": return <SavedScansView />;
-      case "threat_analytics": return <ThreatAnalyticsView />;
-      case "telemetry": return <TelemetryView />;
-      default: return <HomeView {...vocalVerify} />;
+      case "home":
+        return <HomeView {...vocalVerify} />;
+      case "call_verify":
+        return (
+          <CallVerifyResult
+            {...vocalVerify}
+            uploadedFileName={vocalVerify.callFileName}
+            setUploadedFileName={vocalVerify.setCallFileName}
+            uploadedDuration={vocalVerify.callDuration}
+            setUploadedDuration={vocalVerify.setCallDuration}
+            uploadedFile={vocalVerify.callFile}
+            setUploadedFile={vocalVerify.setCallFile}
+            manualReferenceFile={vocalVerify.callReferenceFile}
+            setManualReferenceFile={vocalVerify.setCallReferenceFile}
+            manualReferenceName={vocalVerify.callReferenceName}
+            setManualReferenceName={vocalVerify.setCallReferenceName}
+            isAnalyzing={vocalVerify.callIsAnalyzing}
+            analysisStep={vocalVerify.callAnalysisStep}
+            result={vocalVerify.callResult}
+            resetAnalysis={vocalVerify.resetCallAnalysis}
+          />
+        );
+      case "fake_video":
+        return (
+          <FakeVideoAnalysis
+            {...vocalVerify}
+            uploadedFileName={vocalVerify.videoFileName}
+            setUploadedFileName={vocalVerify.setVideoFileName}
+            uploadedDuration={vocalVerify.videoDuration}
+            setUploadedDuration={vocalVerify.setVideoDuration}
+            uploadedFile={vocalVerify.videoFile}
+            setUploadedFile={vocalVerify.setVideoFile}
+            manualReferenceFile={vocalVerify.videoReferenceFile}
+            setManualReferenceFile={vocalVerify.setVideoReferenceFile}
+            manualReferenceName={vocalVerify.videoReferenceName}
+            setManualReferenceName={vocalVerify.setVideoReferenceName}
+            isManualReferenceUpload={vocalVerify.videoIsManualReferenceUpload}
+            setIsManualReferenceUpload={vocalVerify.setVideoIsManualReferenceUpload}
+            isAnalyzing={vocalVerify.videoIsAnalyzing}
+            analysisStep={vocalVerify.videoAnalysisStep}
+            result={vocalVerify.videoResult}
+            resetAnalysis={vocalVerify.resetVideoAnalysis}
+          />
+        );
+      case "saved_scans":
+        return <SavedScansView />;
+      case "threat_analytics":
+        return <ThreatAnalyticsView />;
+      case "telemetry":
+        return <TelemetryView />;
+      default:
+        return <HomeView {...vocalVerify} />;
     }
   };
+
 
   return <main className="app-frame">
     {vocalVerify.activeModal === 'solutions' && <SolutionsModal onClose={() => vocalVerify.setActiveModal(null)} />}

@@ -1,9 +1,11 @@
 import { useRef, useState, ChangeEvent, DragEvent } from "react";
 import { 
   FileAudio, Play, Activity, User, ShieldAlert, CheckCircle2, 
-  Upload, Radio, Mic2, ShieldCheck, AlertTriangle, Smartphone 
+  Upload, Radio, Mic2, ShieldCheck, AlertTriangle, Smartphone,
+  Wifi, WifiOff, ChevronDown, ChevronUp, Copy, Check, Globe
 } from "lucide-react";
 import { ScanResult } from "../../hooks/useVocalVerify";
+import { LiveAudioMonitor } from "./LiveAudioMonitor";
 
 export function CallVerifyResult(props: any) {
   const { 
@@ -28,6 +30,8 @@ export function CallVerifyResult(props: any) {
     setManualReferenceName,
     runRealCallAnalysis,
     isPhoneConnected,
+    isBackendConnected,
+    activePhoneDevice,
     liveCall
   } = props;
 
@@ -35,8 +39,18 @@ export function CallVerifyResult(props: any) {
   const refInputRef = useRef<HTMLInputElement>(null);
   const [targetMode, setTargetMode] = useState<"contacts" | "custom" | "upload">("contacts");
   const [customTarget, setCustomTarget] = useState("");
+  const [showGuide, setShowGuide] = useState(false);
+  const [copiedText, setCopiedText] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedText(text);
+    setTimeout(() => setCopiedText(null), 2000);
+  };
 
   const resultData = result as ScanResult | null;
+  const currentCaller = liveCall?.caller_number || (resultData?.filename?.startsWith("Live Call: ") ? resultData.filename.replace("Live Call: ", "") : "+91 98XXX XXXXX");
+
 
   const handleAudioSelect = (file?: File) => {
     if (!file) return;
@@ -92,41 +106,144 @@ export function CallVerifyResult(props: any) {
       {/* Live Phone Overlay Stream Status Banner */}
       <div style={{
         background: isPhoneConnected ? 'rgba(78, 198, 145, 0.08)' : '#141418',
-        border: `1px solid ${isPhoneConnected ? 'rgba(78, 198, 145, 0.25)' : 'var(--line)'}`,
-        padding: '12px 18px',
+        border: `1px solid ${isPhoneConnected ? 'rgba(78, 198, 145, 0.3)' : 'var(--line)'}`,
+        padding: '14px 18px',
         borderRadius: '10px',
-        marginBottom: '20px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center'
+        marginBottom: '16px',
       }}>
-        <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-          <div style={{
-            width: '10px', height: '10px', borderRadius: '50%',
-            background: isPhoneConnected ? '#4ec691' : '#888',
-            boxShadow: isPhoneConnected ? '0 0 10px #4ec691' : 'none'
-          }} />
-          <div>
-            <div style={{fontSize: '13px', fontWeight: 'bold', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px'}}>
-              <Smartphone size={14} style={{color: '#7dbdff'}} />
-              {isPhoneConnected ? 'Mobile Call Guard WebSocket Active' : 'Mobile Call Guard: Listening for Phone Connection'}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '12px'
+        }}>
+          <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+            <div style={{
+              width: '12px', height: '12px', borderRadius: '50%',
+              background: isPhoneConnected ? '#4ec691' : '#888',
+              boxShadow: isPhoneConnected ? '0 0 12px #4ec691' : 'none',
+              animation: isPhoneConnected ? 'pulse 2s infinite' : 'none'
+            }} />
+            <div>
+              <div style={{fontSize: '13px', fontWeight: 'bold', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                <Smartphone size={15} style={{color: isPhoneConnected ? '#4ec691' : '#7dbdff'}} />
+                {isPhoneConnected 
+                  ? `Mobile Call Guard Active ${activePhoneDevice ? `(${activePhoneDevice})` : ''}` 
+                  : 'Mobile Call Guard: Awaiting Phone Stream'}
+                <span style={{
+                  fontSize: '10px', 
+                  padding: '2px 8px', 
+                  borderRadius: '12px', 
+                  background: isBackendConnected ? 'rgba(78, 198, 145, 0.15)' : 'rgba(255, 98, 109, 0.15)',
+                  color: isBackendConnected ? '#4ec691' : '#ff626d',
+                  fontWeight: 600
+                }}>
+                  {isBackendConnected ? 'Engine Online :8080' : 'Engine Connecting...'}
+                </span>
+              </div>
+              <div style={{fontSize: '11px', color: '#888', marginTop: '2px'}}>
+                FastAPI WebSocket: <code>/ws/telephony/&#123;device_id&#125;</code> — Receives real-time PCM-16 audio & sends live HUD verdicts.
+              </div>
             </div>
-            <div style={{fontSize: '11px', color: '#888', marginTop: '2px'}}>
-              Endpoint: <code>/ws/telephony/&#123;device_id&#125;</code> — Receives real-time PCM-16 audio frames from the Android overlay app.
-            </div>
+          </div>
+
+          <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+            {liveCall && (
+              <div style={{
+                background: liveCall.verdict?.riskTier === 'HIGH' ? 'rgba(255,98,109,0.2)' : 'rgba(78,198,145,0.2)',
+                color: liveCall.verdict?.riskTier === 'HIGH' ? '#ff626d' : '#4ec691',
+                padding: '6px 14px',
+                borderRadius: '6px',
+                fontSize: '11px',
+                fontWeight: 'bold',
+                border: `1px solid ${liveCall.verdict?.riskTier === 'HIGH' ? 'rgba(255,98,109,0.4)' : 'rgba(78,198,145,0.4)'}`
+              }}>
+                Live Stream: {liveCall.caller_number || "Incoming"} · {liveCall.verdict?.outcomeCode || "STREAMING"}
+              </div>
+            )}
+            <button
+              onClick={() => setShowGuide(!showGuide)}
+              style={{
+                background: '#222228',
+                border: '1px solid var(--line)',
+                color: '#7dbdff',
+                fontSize: '11px',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <Globe size={12} />
+              Connect App
+              {showGuide ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
           </div>
         </div>
 
-        {liveCall && (
+        {/* Expandable Phone App Connection Guide */}
+        {showGuide && (
           <div style={{
-            background: liveCall.verdict?.riskTier === 'HIGH' ? 'rgba(255,98,109,0.2)' : 'rgba(78,198,145,0.2)',
-            color: liveCall.verdict?.riskTier === 'HIGH' ? '#ff626d' : '#4ec691',
-            padding: '6px 14px',
-            borderRadius: '6px',
-            fontSize: '11px',
-            fontWeight: 'bold'
+            marginTop: '14px',
+            paddingTop: '14px',
+            borderTop: '1px solid var(--line)',
+            fontSize: '12px',
+            color: '#bbb',
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '16px'
           }}>
-            Active Call: {liveCall.caller_number || "Incoming"} · {liveCall.verdict?.outcomeCode || "SCREENING"}
+            <div style={{background: '#0e0e12', padding: '12px', borderRadius: '8px', border: '1px solid #282832'}}>
+              <div style={{fontWeight: 'bold', color: '#fff', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                <Globe size={13} style={{color: '#2bb3ff'}} /> Method 1: ngrok Tunnel (Recommended for Real Phone / APK)
+              </div>
+              <p style={{margin: '4px 0 8px 0', fontSize: '11px', color: '#888'}}>
+                Run ngrok command in terminal to create a public HTTPS/WSS tunnel to FastAPI (:8080):
+              </p>
+              <div style={{display: 'flex', alignItems: 'center', gap: '6px', background: '#181820', padding: '6px 10px', borderRadius: '4px', fontFamily: 'monospace', fontSize: '11px'}}>
+                <span style={{flex: 1, color: '#4ec691'}}>ngrok http 8080</span>
+                <button 
+                  onClick={() => copyToClipboard('ngrok http 8080')}
+                  style={{background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer'}}>
+                  {copiedText === 'ngrok http 8080' ? <Check size={13} style={{color: '#4ec691'}}/> : <Copy size={13}/>}
+                </button>
+              </div>
+              <p style={{margin: '8px 0 0 0', fontSize: '11px', color: '#999'}}>
+                Copy the generated Forwarding URL (e.g. <code>https://&lt;subdomain&gt;.ngrok-free.app</code>) into your phone app's endpoint field and tap <strong>Save ngrok endpoint</strong>.
+              </p>
+            </div>
+
+            <div style={{background: '#0e0e12', padding: '12px', borderRadius: '8px', border: '1px solid #282832'}}>
+              <div style={{fontWeight: 'bold', color: '#fff', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                <Wifi size={13} style={{color: '#7dbdff'}} /> Method 2: Localhost / LAN
+              </div>
+              <p style={{margin: '4px 0 8px 0', fontSize: '11px', color: '#888'}}>
+                For Android Studio Emulator or phone on same Wi-Fi network:
+              </p>
+              <div style={{display: 'flex', flexDirection: 'column', gap: '6px'}}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px', background: '#181820', padding: '6px 10px', borderRadius: '4px', fontFamily: 'monospace', fontSize: '11px'}}>
+                  <span style={{color: '#888'}}>Emulator:</span>
+                  <span style={{flex: 1, color: '#7dbdff'}}>http://10.0.2.2:8080</span>
+                  <button 
+                    onClick={() => copyToClipboard('http://10.0.2.2:8080')}
+                    style={{background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer'}}>
+                    {copiedText === 'http://10.0.2.2:8080' ? <Check size={13} style={{color: '#4ec691'}}/> : <Copy size={13}/>}
+                  </button>
+                </div>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px', background: '#181820', padding: '6px 10px', borderRadius: '4px', fontFamily: 'monospace', fontSize: '11px'}}>
+                  <span style={{color: '#888'}}>Port forward:</span>
+                  <span style={{flex: 1, color: '#7dbdff'}}>adb reverse tcp:8080 tcp:8080</span>
+                  <button 
+                    onClick={() => copyToClipboard('adb reverse tcp:8080 tcp:8080')}
+                    style={{background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer'}}>
+                    {copiedText === 'adb reverse tcp:8080 tcp:8080' ? <Check size={13} style={{color: '#4ec691'}}/> : <Copy size={13}/>}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -138,7 +255,7 @@ export function CallVerifyResult(props: any) {
             <div className="icon-shell"><PhoneCallIcon /></div>
             <div>
               <p>01 - SOURCE CALL AUDIO</p>
-              <h3>Suspicious Inbound Call Recording</h3>
+              <h3>{liveCall ? "Live Mobile Stream (Active)" : "Suspicious Inbound Call Audio"}</h3>
             </div>
           </div>
 
@@ -154,14 +271,22 @@ export function CallVerifyResult(props: any) {
             <div>
               <div style={{color: '#888', fontSize: '10px', fontWeight: 'bold', marginBottom: '4px'}}>TELECOM METADATA</div>
               <div style={{display: 'flex', gap: '12px', fontSize: '12px'}}>
-                <span style={{color: '#fff'}}>Caller ID: <b style={{color: '#7dbdff'}}>+91 98XXX XXXXX</b></span>
+                <span style={{color: '#fff'}}>Caller ID: <b style={{color: '#7dbdff'}}>{currentCaller}</b></span>
                 <span style={{color: '#fff'}}>Format: <b>16kHz Mono / AMR-WB</b></span>
               </div>
             </div>
-            <div style={{background: 'rgba(78,198,145,0.1)', color: '#4ec691', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold'}}>
-              {uploadedFileName ? 'Audio Ready' : 'Awaiting File'}
+            <div style={{
+              background: liveCall || isPhoneConnected ? 'rgba(78,198,145,0.15)' : 'rgba(255,255,255,0.05)', 
+              color: liveCall || isPhoneConnected ? '#4ec691' : '#888', 
+              padding: '4px 8px', 
+              borderRadius: '4px', 
+              fontSize: '10px', 
+              fontWeight: 'bold'
+            }}>
+              {liveCall ? 'Live Stream Active' : isPhoneConnected ? 'Mobile Connected' : uploadedFileName ? 'Audio Ready' : 'Awaiting Call / File'}
             </div>
           </div>
+
 
           {uploadedFileName ? (
              <div className="uploaded-media">
@@ -461,6 +586,12 @@ export function CallVerifyResult(props: any) {
           </div>
         </div>
       )}
+
+      {/* ── Live Phone Audio Monitor ─────────────────────────────────────── */}
+      {/* Hear the raw audio stream coming from the phone in real-time.       */}
+      {/* Completely self-contained, does NOT touch any existing state above. */}
+      <LiveAudioMonitor />
+
     </div>
   );
 }

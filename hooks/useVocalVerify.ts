@@ -52,6 +52,57 @@ export interface ScanHistoryItem {
 type ViewType = "home" | "call_verify" | "fake_video" | "saved_scans" | "threat_analytics" | "telemetry";
 type ModalType = "solutions" | "documentation" | "research" | "api_docs" | null;
 
+/**
+ * Resolves the backend base URL. A static dashboard served by app.py must use
+ * its current origin (including ngrok tunnels or public proxies), not localhost.
+ */
+export function getBackendBaseUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
+  if (envUrl && envUrl.trim() !== "") {
+    const configured = envUrl.trim().replace(/\/+$/, "");
+    // NEXT_PUBLIC_BACKEND_URL is embedded at build time. A localhost value is
+    // correct for `npm run dev`, but must not make a dashboard opened through
+    // an ngrok tunnel call the viewer's own localhost.
+    if (typeof window !== "undefined") {
+      const configuredHost = new URL(configured).hostname;
+      const pageHost = window.location.hostname;
+      const configuredIsLocal = configuredHost === "localhost" || configuredHost === "127.0.0.1";
+      const pageIsLocal = pageHost === "localhost" || pageHost === "127.0.0.1";
+      if (configuredIsLocal && !pageIsLocal) return window.location.origin;
+    }
+    return configured;
+  }
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  return "http://localhost:8080";
+}
+
+/**
+ * Dynamically converts the backend URL protocol to WebSocket protocol:
+ * https:// -> wss:// (ngrok tunnels *.ngrok-free.app, *.ngrok.app, *.ngrok.io)
+ * http://  -> ws://  (Localhost / plain HTTP)
+ */
+export function getBackendWsUrl(path: string = "/ws/dashboard"): string {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  const baseUrl = getBackendBaseUrl();
+
+  if (baseUrl.startsWith("https://")) {
+    return baseUrl.replace(/^https:\/\//i, "wss://") + cleanPath;
+  }
+  if (baseUrl.startsWith("http://")) {
+    return baseUrl.replace(/^http:\/\//i, "ws://") + cleanPath;
+  }
+  if (baseUrl.startsWith("wss://") || baseUrl.startsWith("ws://")) {
+    return baseUrl.replace(/\/+$/, "") + cleanPath;
+  }
+  if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}${cleanPath}`;
+  }
+  return `ws://localhost:8080${cleanPath}`;
+}
+
 // Fake Video Demos
 const fakeVideoResult: ScanResult = {
   id: "SCAN-92A1",
@@ -144,125 +195,169 @@ export function useVocalVerify() {
   const [activeView, setActiveView] = useState<ViewType>("home");
   const [activeModal, setActiveModal] = useState<ModalType>(null);
 
-  // Common analysis state
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisStep, setAnalysisStep] = useState(0);
-  const [result, setResult] = useState<ScanResult | null>(null);
-  
-  // Fake Video Mode State
+  // ── Fake Video Analysis Mode State ────────────────────────────────
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoFileName, setVideoFileName] = useState<string | null>(null);
+  const [videoDuration, setVideoDuration] = useState<string | null>(null);
+  const [videoReferenceFile, setVideoReferenceFile] = useState<File | null>(null);
+  const [videoReferenceName, setVideoReferenceName] = useState<string | null>(null);
+  const [videoIsManualReferenceUpload, setVideoIsManualReferenceUpload] = useState(false);
   const [publicFigureTarget, setPublicFigureTarget] = useState("");
-  const [isManualReferenceUpload, setIsManualReferenceUpload] = useState(false);
-  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
-  const [uploadedDuration, setUploadedDuration] = useState<string | null>(null);
-  const [manualReferenceName, setManualReferenceName] = useState<string | null>(null);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [manualReferenceFile, setManualReferenceFile] = useState<File | null>(null);
+  const [videoIsAnalyzing, setVideoIsAnalyzing] = useState(false);
+  const [videoAnalysisStep, setVideoAnalysisStep] = useState(0);
+  const [videoOverlayMessage, setVideoOverlayMessage] = useState<string | null>(null);
+  const [videoResult, setVideoResult] = useState<ScanResult | null>(null);
 
-  // Call Verify Mode State
+  // ── Call Verify Mode State ────────────────────────────────────────
+  const [callFile, setCallFile] = useState<File | null>(null);
+  const [callFileName, setCallFileName] = useState<string | null>(null);
+  const [callDuration, setCallDuration] = useState<string | null>(null);
+  const [callReferenceFile, setCallReferenceFile] = useState<File | null>(null);
+  const [callReferenceName, setCallReferenceName] = useState<string | null>(null);
   const [callTarget, setCallTarget] = useState("");
   const [callSimilarityThreshold, setCallSimilarityThreshold] = useState(85);
+  const [callIsAnalyzing, setCallIsAnalyzing] = useState(false);
+  const [callAnalysisStep, setCallAnalysisStep] = useState(0);
+  const [callOverlayMessage, setCallOverlayMessage] = useState<string | null>(null);
+  const [callResult, setCallResult] = useState<ScanResult | null>(null);
 
-  const timer = useRef<number | null>(null);
+  // Live Phone & Backend WebSocket state
+  const [liveCall, setLiveCall] = useState<any | null>(null);
+  const [isPhoneConnected, setIsPhoneConnected] = useState(false);
+  const [isBackendConnected, setIsBackendConnected] = useState(false);
+  const [activePhoneDevice, setActivePhoneDevice] = useState<string | null>(null);
 
-  const clearTimer = useCallback(() => {
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = null;
+
+  // Timers for demo presets
+  const videoTimer = useRef<number | null>(null);
+  const callTimer = useRef<number | null>(null);
+
+  const clearVideoTimer = useCallback(() => {
+    if (videoTimer.current) window.clearTimeout(videoTimer.current);
+    videoTimer.current = null;
   }, []);
 
-  useEffect(() => clearTimer, [clearTimer]);
+  const clearCallTimer = useCallback(() => {
+    if (callTimer.current) window.clearTimeout(callTimer.current);
+    callTimer.current = null;
+  }, []);
 
-  const runAnalysisProcess = useCallback((preset: ScanResult, maxSteps: number) => {
-    clearTimer();
-    setResult(null);
-    setIsAnalyzing(true);
-    setAnalysisStep(1);
+  useEffect(() => {
+    return () => {
+      clearVideoTimer();
+      clearCallTimer();
+    };
+  }, [clearVideoTimer, clearCallTimer]);
+
+  // ── Fake Video Process & Demos ────────────────────────────────────
+  const runVideoPresetProcess = useCallback((preset: ScanResult, maxSteps: number) => {
+    clearVideoTimer();
+    setVideoResult(null);
+    setVideoIsAnalyzing(true);
+    setVideoAnalysisStep(1);
+    setVideoOverlayMessage("Analyzing media features...");
     let nextStep = 1;
     const advance = () => {
       if (nextStep >= maxSteps) {
-        setAnalysisStep(maxSteps);
-        setResult(preset);
-        setIsAnalyzing(false);
-        timer.current = null;
+        setVideoAnalysisStep(maxSteps);
+        setVideoResult(preset);
+        setVideoIsAnalyzing(false);
+        setVideoOverlayMessage(null);
+        videoTimer.current = null;
         return;
       }
       nextStep += 1;
-      setAnalysisStep(nextStep);
-      const delay = preset.mode === 'call' ? 1000 : 1200; 
-      timer.current = window.setTimeout(advance, delay);
+      setVideoAnalysisStep(nextStep);
+      videoTimer.current = window.setTimeout(advance, 1200);
     };
-    timer.current = window.setTimeout(advance, preset.mode === 'call' ? 1000 : 1200);
-  }, [clearTimer]);
+    videoTimer.current = window.setTimeout(advance, 1200);
+  }, [clearVideoTimer]);
 
   const loadDemoFakeVideo = useCallback(() => {
-    setUploadedFileName("press-briefing-clip.mp4");
-    setUploadedDuration("00:42");
+    setVideoFileName("press-briefing-clip.mp4");
+    setVideoDuration("00:42");
     setPublicFigureTarget("Narendra Modi");
-    setIsManualReferenceUpload(false);
-    runAnalysisProcess(fakeVideoResult, 6);
-  }, [runAnalysisProcess]);
+    setVideoIsManualReferenceUpload(false);
+    runVideoPresetProcess(fakeVideoResult, 6);
+  }, [runVideoPresetProcess]);
 
   const loadDemoRealVideo = useCallback(() => {
-    setUploadedFileName("official-address.mp4");
-    setUploadedDuration("01:16");
+    setVideoFileName("official-address.mp4");
+    setVideoDuration("01:16");
     setPublicFigureTarget("Narendra Modi");
-    setIsManualReferenceUpload(false);
-    runAnalysisProcess(realVideoResult, 6);
-  }, [runAnalysisProcess]);
+    setVideoIsManualReferenceUpload(false);
+    runVideoPresetProcess(realVideoResult, 6);
+  }, [runVideoPresetProcess]);
 
-  // Real backend pipeline caller
+  const resetVideoAnalysis = useCallback(() => {
+    clearVideoTimer();
+    setVideoResult(null);
+    setVideoIsAnalyzing(false);
+    setVideoAnalysisStep(0);
+    setVideoOverlayMessage(null);
+    setVideoFileName(null);
+    setVideoDuration(null);
+    setVideoFile(null);
+    setVideoReferenceFile(null);
+    setVideoReferenceName(null);
+  }, [clearVideoTimer]);
+
   const runRealVideoAnalysis = useCallback(async () => {
-    if (!uploadedFile) {
+    if (!videoFile) {
       loadDemoFakeVideo();
       return;
     }
 
-    clearTimer();
-    setResult(null);
-    setIsAnalyzing(true);
-    setAnalysisStep(1);
+    clearVideoTimer();
+    setVideoResult(null);
+    setVideoIsAnalyzing(true);
+    setVideoAnalysisStep(1);
+    setVideoOverlayMessage("Extracting audio from media container (FFmpeg)...");
 
-    // Progress animation through the 6 pipeline stages while processing
     let currentStep = 1;
     const interval = window.setInterval(() => {
       if (currentStep < 5) {
         currentStep += 1;
-        setAnalysisStep(currentStep);
+        setVideoAnalysisStep((prev) => Math.max(prev, currentStep));
       }
     }, 1100);
 
     try {
       const formData = new FormData();
-      formData.append("file", uploadedFile);
+      formData.append("file", videoFile);
       if (publicFigureTarget) {
         formData.append("public_figure_name", publicFigureTarget);
       }
-      if (manualReferenceFile) {
-        formData.append("reference_file", manualReferenceFile);
+      if (videoReferenceFile) {
+        formData.append("reference_file", videoReferenceFile);
       }
 
+      const backendBase = getBackendBaseUrl();
       let response: Response | undefined;
       try {
-        response = await fetch("/api/v1/verify-public-figure", {
+        response = await fetch(`${backendBase}/api/v1/verify-public-figure`, {
           method: "POST",
           body: formData,
         });
       } catch (err1) {
+        console.warn(`Primary fetch to ${backendBase} failed, trying relative fallback:`, err1);
         try {
-          response = await fetch("http://127.0.0.1:8000/api/v1/verify-public-figure", {
+          response = await fetch("/api/v1/verify-public-figure", {
             method: "POST",
             body: formData,
           });
         } catch (err2) {
-          console.error("Both relative and direct fetch failed:", err1, err2);
+          console.error("Both direct and fallback fetch failed:", err1, err2);
         }
       }
 
       window.clearInterval(interval);
-      setAnalysisStep(6);
+      setVideoAnalysisStep(6);
+      setVideoOverlayMessage("Cross-verification complete");
 
       if (response && response.ok) {
         const data = await response.json();
-        setResult({
+        setVideoResult({
           ...data,
           timestamp: new Date(data.timestamp || Date.now()),
         });
@@ -274,96 +369,126 @@ export function useVocalVerify() {
     } catch (err: any) {
       console.error("Pipeline execution error:", err);
       window.clearInterval(interval);
-      setAnalysisStep(6);
+      setVideoAnalysisStep(6);
       alert("Error running analysis: " + (err?.message || err));
     } finally {
       window.clearInterval(interval);
-      setIsAnalyzing(false);
+      setVideoIsAnalyzing(false);
+      setVideoOverlayMessage(null);
     }
-  }, [uploadedFile, manualReferenceFile, publicFigureTarget, clearTimer, loadDemoFakeVideo]);
+  }, [videoFile, videoReferenceFile, publicFigureTarget, clearVideoTimer, loadDemoFakeVideo]);
+
+  // ── Call Verify Process & Demos ───────────────────────────────────
+  const runCallPresetProcess = useCallback((preset: ScanResult, maxSteps: number) => {
+    clearCallTimer();
+    setCallResult(null);
+    setCallIsAnalyzing(true);
+    setCallAnalysisStep(1);
+    setCallOverlayMessage("Screening call audio...");
+    let nextStep = 1;
+    const advance = () => {
+      if (nextStep >= maxSteps) {
+        setCallAnalysisStep(maxSteps);
+        setCallResult(preset);
+        setCallIsAnalyzing(false);
+        setCallOverlayMessage(null);
+        callTimer.current = null;
+        return;
+      }
+      nextStep += 1;
+      setCallAnalysisStep(nextStep);
+      callTimer.current = window.setTimeout(advance, 1000);
+    };
+    callTimer.current = window.setTimeout(advance, 1000);
+  }, [clearCallTimer]);
 
   const loadDemoCeoVishing = useCallback(() => {
-    setUploadedFileName("suspicious_ceo_transfer.wav");
+    setCallFileName("suspicious_ceo_transfer.wav");
     setCallTarget("John Doe (CEO)");
-    runAnalysisProcess(ceoVishingScamResult, 5);
-  }, [runAnalysisProcess]);
+    runCallPresetProcess(ceoVishingScamResult, 5);
+  }, [runCallPresetProcess]);
 
   const loadDemoBankOtp = useCallback(() => {
-    setUploadedFileName("bank_manager_otp_call.wav");
+    setCallFileName("bank_manager_otp_call.wav");
     setCallTarget("SBI Support Vault");
-    runAnalysisProcess(bankOtpFraudResult, 5);
-  }, [runAnalysisProcess]);
+    runCallPresetProcess(bankOtpFraudResult, 5);
+  }, [runCallPresetProcess]);
 
   const loadDemoVerifiedExec = useCallback(() => {
-    setUploadedFileName("legit_cfo_briefing.wav");
+    setCallFileName("legit_cfo_briefing.wav");
     setCallTarget("Sarah Jenkins (CFO)");
-    runAnalysisProcess(verifiedExecutiveCallResult, 5);
-  }, [runAnalysisProcess]);
+    runCallPresetProcess(verifiedExecutiveCallResult, 5);
+  }, [runCallPresetProcess]);
 
-  const resetAnalysis = useCallback(() => {
-    clearTimer();
-    setResult(null);
-    setIsAnalyzing(false);
-    setAnalysisStep(0);
-    setUploadedFileName(null);
-    setUploadedDuration(null);
-    setUploadedFile(null);
-    setManualReferenceFile(null);
-  }, [clearTimer]);
+  const resetCallAnalysis = useCallback(() => {
+    clearCallTimer();
+    setCallResult(null);
+    setCallIsAnalyzing(false);
+    setCallAnalysisStep(0);
+    setCallOverlayMessage(null);
+    setCallFileName(null);
+    setCallDuration(null);
+    setCallFile(null);
+    setCallReferenceFile(null);
+    setCallReferenceName(null);
+  }, [clearCallTimer]);
 
-  // Real call analysis caller
   const runRealCallAnalysis = useCallback(async () => {
-    if (!uploadedFile) {
+    if (!callFile) {
       loadDemoCeoVishing();
       return;
     }
 
-    clearTimer();
-    setResult(null);
-    setIsAnalyzing(true);
-    setAnalysisStep(1);
+    clearCallTimer();
+    setCallResult(null);
+    setCallIsAnalyzing(true);
+    setCallAnalysisStep(1);
+    setCallOverlayMessage("Normalizing Telephony Codec: AMR-WB / PCM -> 16kHz Mono WAV...");
 
     let currentStep = 1;
     const interval = window.setInterval(() => {
-      if (currentStep < 5) {
+      if (currentStep < 4) {
         currentStep += 1;
-        setAnalysisStep(currentStep);
+        setCallAnalysisStep((prev) => Math.max(prev, currentStep));
       }
     }, 1000);
 
     try {
       const formData = new FormData();
-      formData.append("file", uploadedFile);
+      formData.append("file", callFile);
       if (callTarget) {
         formData.append("public_figure_name", callTarget);
       }
-      if (manualReferenceFile) {
-        formData.append("reference_file", manualReferenceFile);
+      if (callReferenceFile) {
+        formData.append("reference_file", callReferenceFile);
       }
 
+      const backendBase = getBackendBaseUrl();
       let response: Response | undefined;
       try {
-        response = await fetch("/api/v1/verify-public-figure", {
+        response = await fetch(`${backendBase}/api/v1/verify-public-figure`, {
           method: "POST",
           body: formData,
         });
       } catch (err1) {
+        console.warn(`Primary fetch to ${backendBase} failed, trying relative fallback:`, err1);
         try {
-          response = await fetch("http://127.0.0.1:8000/api/v1/verify-public-figure", {
+          response = await fetch("/api/v1/verify-public-figure", {
             method: "POST",
             body: formData,
           });
         } catch (err2) {
-          console.error("Both relative and direct fetch failed:", err1, err2);
+          console.error("Both direct and fallback fetch failed:", err1, err2);
         }
       }
 
       window.clearInterval(interval);
-      setAnalysisStep(5);
+      setCallAnalysisStep(5);
+      setCallOverlayMessage("Telephony analysis complete");
 
       if (response && response.ok) {
         const data = await response.json();
-        setResult({
+        setCallResult({
           ...data,
           mode: "call",
           timestamp: new Date(data.timestamp || Date.now()),
@@ -376,49 +501,103 @@ export function useVocalVerify() {
     } catch (err: any) {
       console.error("Call verification error:", err);
       window.clearInterval(interval);
-      setAnalysisStep(5);
+      setCallAnalysisStep(5);
       alert("Error running call analysis: " + (err?.message || err));
     } finally {
       window.clearInterval(interval);
-      setIsAnalyzing(false);
+      setCallIsAnalyzing(false);
+      setCallOverlayMessage(null);
     }
-  }, [uploadedFile, callTarget, manualReferenceFile, clearTimer, loadDemoCeoVishing]);
+  }, [callFile, callTarget, callReferenceFile, clearCallTimer, loadDemoCeoVishing]);
 
-  // Live Phone WebSocket state
-  const [liveCall, setLiveCall] = useState<any | null>(null);
-  const [isPhoneConnected, setIsPhoneConnected] = useState(false);
-
+  // ── Dynamic WebSocket Protocol & Live Stream Sync ─────────────────
   useEffect(() => {
     let ws: WebSocket | null = null;
     let reconnectTimeout: any = null;
+    let pingInterval: any = null;
+    let isMounted = true;
 
     const connectWs = () => {
       try {
-        if (typeof window === "undefined") return;
-        const isLocalDev = window.location.port === "3000";
-        const wsUrl = isLocalDev
-          ? "ws://127.0.0.1:8000/ws/dashboard"
-          : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/dashboard`;
+        if (typeof window === "undefined" || !isMounted) return;
+        const wsUrl = getBackendWsUrl("/ws/dashboard");
+        console.log(`[VocalVerify WS] Connecting to: ${wsUrl}`);
 
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
-          setIsPhoneConnected(true);
+          if (!isMounted) return;
+          console.log(`[VocalVerify WS] Dashboard socket established with ${wsUrl}`);
+          setIsBackendConnected(true);
+
+          // Keep alive ping every 20s for ngrok / proxy tunnels
+          if (pingInterval) clearInterval(pingInterval);
+          pingInterval = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              try { ws.send("ping"); } catch (_) {}
+            }
+          }, 20000);
         };
 
         ws.onmessage = (event) => {
+          if (!isMounted) return;
           try {
             if (event.data === "pong") return;
             const data = JSON.parse(event.data);
+
+            // Step-by-step progress sync from backend
+            if (data.event_type === "PIPELINE_PROGRESS" || data.type === "progress") {
+              if (typeof data.step === "number" && data.step > 0) {
+                setVideoAnalysisStep(data.step);
+                setCallAnalysisStep(data.step);
+              }
+              if (data.message) {
+                setVideoOverlayMessage(data.message);
+                setCallOverlayMessage(data.message);
+              }
+              return;
+            }
+
+            // Real-time Mobile Phone Connection status events
+            if (data.event_type === "PHONE_CONNECTED") {
+              console.log("[VocalVerify WS] Mobile phone connected:", data.device_id);
+              setIsPhoneConnected(true);
+              if (data.device_id) setActivePhoneDevice(data.device_id);
+              return;
+            }
+
+            if (data.event_type === "PHONE_DISCONNECTED") {
+              console.log("[VocalVerify WS] Mobile phone disconnected:", data.device_id);
+              setIsPhoneConnected(Boolean(data.is_phone_connected));
+              if (!data.is_phone_connected) setActivePhoneDevice(null);
+              return;
+            }
+
+            if (data.event_type === "PHONE_STATUS") {
+              setIsPhoneConnected(Boolean(data.is_phone_connected));
+              if (data.connected_devices && data.connected_devices.length > 0) {
+                setActivePhoneDevice(data.connected_devices[0]);
+              }
+              return;
+            }
+
+            // Real-time Inbound Call Verdict Broadcasts from Mobile Overlay
             if (data.event_type === "NEW_VERDICT") {
+              setIsPhoneConnected(true);
+              if (data.device_id) setActivePhoneDevice(data.device_id);
               setLiveCall(data);
               const v = data.verdict;
               if (v) {
-                setResult({
+                const caller = data.caller_number || "Incoming";
+                setCallFileName(`Live Call: ${caller}`);
+                setCallDuration(`${Math.round((v.audioDurationMs || 3000) / 1000)}s`);
+                if (v.matchedTarget) setCallTarget(v.matchedTarget);
+
+                setCallResult({
                   id: v.sessionId || `CALL-${Date.now().toString().slice(-4)}`,
                   timestamp: new Date(),
                   mode: "call",
-                  filename: `Live Call: ${data.caller_number || "Incoming"}`,
+                  filename: `Live Call: ${caller}`,
                   duration: Math.round((v.audioDurationMs || 3000) / 1000),
                   claimedIdentity: v.matchedTarget || "Unknown Caller",
                   plad: {
@@ -440,7 +619,7 @@ export function useVocalVerify() {
                   finalScore: v.syntheticScore || 0,
                   riskTier: v.riskTier || "LOW",
                   outcomeCode: v.outcomeCode || "GENUINE",
-                  geminiExplanation: `Live call screening event for caller ${data.caller_number || "unknown"}. Synthetic score: ${((v.syntheticScore || 0) * 100).toFixed(1)}%.`,
+                  geminiExplanation: `Live call screening event for caller ${caller}. Synthetic score: ${((v.syntheticScore || 0) * 100).toFixed(1)}%. Risk tier: ${v.riskTier || "LOW"}.`,
                 });
               }
             }
@@ -450,21 +629,32 @@ export function useVocalVerify() {
         };
 
         ws.onclose = () => {
-          setIsPhoneConnected(false);
-          reconnectTimeout = setTimeout(connectWs, 4000);
+          if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+          if (!isMounted) return;
+          console.warn("[VocalVerify WS] Dashboard socket closed. Reconnecting in 3s...");
+          setIsBackendConnected(false);
+          reconnectTimeout = setTimeout(connectWs, 3000);
         };
 
-        ws.onerror = () => {
-          ws?.close();
+        ws.onerror = (err) => {
+          console.warn("[VocalVerify WS] Socket error:", err);
         };
       } catch (err) {
-        reconnectTimeout = setTimeout(connectWs, 5000);
+        console.error("[VocalVerify WS] Initialization error:", err);
+        if (isMounted) {
+          setIsBackendConnected(false);
+          reconnectTimeout = setTimeout(connectWs, 4000);
+        }
       }
     };
 
     connectWs();
     return () => {
-      if (ws) ws.close();
+      isMounted = false;
+      if (pingInterval) clearInterval(pingInterval);
+      if (ws) {
+        try { ws.close(); } catch (_) {}
+      }
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
     };
   }, []);
@@ -473,27 +663,52 @@ export function useVocalVerify() {
     // Navigation
     activeView, setActiveView,
     activeModal, setActiveModal,
-    
-    // Process State
-    isAnalyzing, analysisStep, result, resetAnalysis,
 
-    // Fake Video Mode
+    // ── Fake Video Specific State & Actions ──
     publicFigureTarget, setPublicFigureTarget,
-    isManualReferenceUpload, setIsManualReferenceUpload,
-    uploadedFileName, setUploadedFileName,
-    uploadedDuration, setUploadedDuration,
-    manualReferenceName, setManualReferenceName,
-    uploadedFile, setUploadedFile,
-    manualReferenceFile, setManualReferenceFile,
+    videoFile, setVideoFile,
+    videoFileName, setVideoFileName,
+    videoDuration, setVideoDuration,
+    videoReferenceFile, setVideoReferenceFile,
+    videoReferenceName, setVideoReferenceName,
+    videoIsManualReferenceUpload, setVideoIsManualReferenceUpload,
+    videoIsAnalyzing, videoAnalysisStep, videoOverlayMessage, videoResult,
+    resetVideoAnalysis,
     runRealVideoAnalysis,
     loadDemoFakeVideo, loadDemoRealVideo,
 
-    // Call Verify Mode
+    // ── Call Verify Specific State & Actions ──
     callTarget, setCallTarget,
     callSimilarityThreshold, setCallSimilarityThreshold,
+    callFile, setCallFile,
+    callFileName, setCallFileName,
+    callDuration, setCallDuration,
+    callReferenceFile, setCallReferenceFile,
+    callReferenceName, setCallReferenceName,
+    callIsAnalyzing, callAnalysisStep, callOverlayMessage, callResult,
+    resetCallAnalysis,
     loadDemoCeoVishing, loadDemoBankOtp, loadDemoVerifiedExec,
     runRealCallAnalysis,
-    liveCall, isPhoneConnected
+    liveCall, isPhoneConnected, isBackendConnected, activePhoneDevice,
+
+
+    // ── Active View Adapters (for convenience / backward compatibility) ──
+    uploadedFile: activeView === "call_verify" ? callFile : videoFile,
+    setUploadedFile: (f: File | null) => activeView === "call_verify" ? setCallFile(f) : setVideoFile(f),
+    uploadedFileName: activeView === "call_verify" ? callFileName : videoFileName,
+    setUploadedFileName: (n: string | null) => activeView === "call_verify" ? setCallFileName(n) : setVideoFileName(n),
+    uploadedDuration: activeView === "call_verify" ? callDuration : videoDuration,
+    setUploadedDuration: (d: string | null) => activeView === "call_verify" ? setCallDuration(d) : setVideoDuration(d),
+    manualReferenceFile: activeView === "call_verify" ? callReferenceFile : videoReferenceFile,
+    setManualReferenceFile: (f: File | null) => activeView === "call_verify" ? setCallReferenceFile(f) : setVideoReferenceFile(f),
+    manualReferenceName: activeView === "call_verify" ? callReferenceName : videoReferenceName,
+    setManualReferenceName: (n: string | null) => activeView === "call_verify" ? setCallReferenceName(n) : setVideoReferenceName(n),
+    isManualReferenceUpload: activeView === "call_verify" ? false : videoIsManualReferenceUpload,
+    setIsManualReferenceUpload: (val: boolean) => setVideoIsManualReferenceUpload(val),
+    isAnalyzing: activeView === "call_verify" ? callIsAnalyzing : videoIsAnalyzing,
+    analysisStep: activeView === "call_verify" ? callAnalysisStep : videoAnalysisStep,
+    overlayMessage: activeView === "call_verify" ? callOverlayMessage : videoOverlayMessage,
+    result: activeView === "call_verify" ? callResult : videoResult,
+    resetAnalysis: activeView === "call_verify" ? resetCallAnalysis : resetVideoAnalysis,
   };
 }
-

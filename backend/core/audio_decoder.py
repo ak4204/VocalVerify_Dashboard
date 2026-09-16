@@ -18,18 +18,52 @@ BUFFER_MAX_SECONDS = 5.0
 BUFFER_MAX_SAMPLES = int(TARGET_SR * BUFFER_MAX_SECONDS)
 
 
+def decode_pcm16_bytes(raw_bytes: bytes) -> np.ndarray:
+    """
+    Decode raw PCM-16 mono 16kHz bytes into float32 numpy array normalised to [-1.0, 1.0].
+    Safely strips WAV headers if present and handles odd byte lengths.
+    """
+    if not raw_bytes:
+        return np.array([], dtype=np.float32)
+
+    # Detect & skip 44-byte WAV header if present (RIFF...WAVEfmt )
+    if len(raw_bytes) > 44 and raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WAVE":
+        raw_bytes = raw_bytes[44:]
+
+    # Ensure even number of bytes for 16-bit PCM
+    if len(raw_bytes) % 2 != 0:
+        raw_bytes = raw_bytes[:len(raw_bytes) - 1]
+
+    if len(raw_bytes) == 0:
+        return np.array([], dtype=np.float32)
+
+    pcm_int16 = np.frombuffer(raw_bytes, dtype=np.int16)
+    return pcm_int16.astype(np.float32) / 32768.0
+
+
 def decode_pcm16_b64(b64_string: str) -> np.ndarray:
     """
     Decode a Base64-encoded raw PCM-16 mono 16kHz byte string
     into a float32 numpy array normalised to [-1.0, 1.0].
-
-    No WAV/MP3 headers are expected – pure raw PCM bytes.
+    Tolerates whitespace, missing padding, and URL-safe characters.
     """
-    raw_bytes = base64.b64decode(b64_string)
-    # int16 → float32 in [-1, 1]
-    pcm_int16 = np.frombuffer(raw_bytes, dtype=np.int16)
-    pcm_float = pcm_int16.astype(np.float32) / 32768.0
-    return pcm_float
+    if not b64_string:
+        return np.array([], dtype=np.float32)
+
+    clean_b64 = b64_string.strip().replace("-", "+").replace("_", "/")
+    # Add missing base64 padding if needed
+    missing_padding = len(clean_b64) % 4
+    if missing_padding:
+        clean_b64 += "=" * (4 - missing_padding)
+
+    try:
+        raw_bytes = base64.b64decode(clean_b64)
+    except Exception as e:
+        logger.warning(f"[AudioDecoder] Failed base64 decode: {e}")
+        return np.array([], dtype=np.float32)
+
+    return decode_pcm16_bytes(raw_bytes)
+
 
 
 class SessionBuffer:

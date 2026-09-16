@@ -40,17 +40,11 @@ def classify(
         return OutcomeCode.ANALYZING, RiskTier.SAFE, confidence
 
     # ── Decision table ──────────────────────────────────────────────
-    if synth_score > 0.70:
+    if synth_score >= 0.75:
         return OutcomeCode.AI_IMPERSONATION, RiskTier.HIGH, confidence
 
-    if 0.35 <= synth_score <= 0.70:
-        return OutcomeCode.HIGH_RISK, RiskTier.MEDIUM, confidence
-
-    if synth_score < 0.35 and confidence >= 0.75:
-        return OutcomeCode.GENUINE, RiskTier.SAFE, confidence
-
-    # Borderline: low synth score but not enough confidence
-    return OutcomeCode.GENUINE, RiskTier.LOW, confidence
+    # Treat everything below 75% as safe to avoid premature buzzing on the phone
+    return OutcomeCode.GENUINE, RiskTier.SAFE, confidence
 
 
 def build_explanation(
