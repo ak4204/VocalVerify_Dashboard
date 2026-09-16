@@ -9,54 +9,106 @@ app_file: app.py
 pinned: false
 ---
 
-# 🛡️ VocalVerify: Voice Intelligence Workspace & Telecom Call Guard
+# 🛡️ VocalVerify: Real-Time Voice Clone & Impersonation Defense
 
-VocalVerify is a dual-stream, multi-modal voice deepfake and acoustic impersonation detection engine. It delivers sub-50ms inference for real-time mobile telephony, streaming voice notes, and public figure video cross-verification.
+**VocalVerify** is an end-to-end, multi-modal voice intelligence system designed to detect AI-generated voice clones, deepfake audio, and executive vishing in real-time during live cellular and VoIP calls.
 
-## 🚀 Architecture Overview
+Equipped with an Android companion overlay and a live analytical dashboard, VocalVerify delivers sub-50ms inference across dual AI streams and physiological vocal biomarker analysis.
+
+---
+
+## 🚀 Architectural Breakthroughs
 
 ```
-                          [ Android Call Guard Overlay ]
-                                       │ (WSS PCM-16 frames)
-                                       ▼
+                          [ Android Call Guard Companion ]
+                           │  • Edge VAD (Silence Pruning)
+                           │  • Accessibility Audio Bypass
+                           │  • Floating Security HUD
+                           │ (WSS 16kHz PCM-16 Chunks)
+                           ▼
     ┌────────────────────────────────────────────────────────────────────────┐
-    │  Hugging Face Space (Port 7860)                                        │
+    │  VocalVerify Backend Engine & Live Dashboard                           │
     │                                                                        │
-    │   Nginx Reverse Proxy                                                  │
-    │   ├── /ws/telephony/{device_id} ──► FastAPI WebSocket Engine (:8000)   │
-    │   ├── /ws/dashboard             ──► FastAPI Live Event Stream (:8000)  │
-    │   ├── /api/v1/                  ──► FastAPI REST Endpoints (:8000)     │
-    │   └── /                         ──► Next.js Dashboard UI (:3000)       │
+    │   Nginx Reverse Proxy / Cloud Router                                  │
+    │   ├── /ws/telephony/{device_id} ──► FastAPI WebSocket Engine (:8080)   │
+    │   ├── /ws/dashboard             ──► Dashboard Live Event Stream        │
+    │   ├── /api/v1/                  ──► REST Forensics & Verification APIs │
+    │   └── /                         ──► Next.js Analytics Dashboard (:3000)│
     │                                                                        │
-    │   Inference Engines:                                                   │
-    │   ├── PLAD Liveness Biomarkers (Jitter RAP, Shimmer APQ3, Breath, Flux)│
-    │   ├── 55-Feature XGBoost Acoustic Classifier                           │
-    │   ├── ONNX Wav2Vec 2.0 + ResNet Deep Learning Architecture             │
-    │   └── ECAPA / d-Vector 3-Sample Centroid Cosine Similarity             │
+    │   Multi-Stage Inference Pipeline:                                      │
+    │   ├── 1. Self-Voice Filter: ECAPA-TDNN drops user's own speech        │
+    │   ├── 2. PLAD Biomarkers: Jitter RAP, Shimmer APQ3, Breath Energy      │
+    │   ├── 3. Acoustic Stream: 55-Feature MFCC & Spectral XGBoost Model     │
+    │   ├── 4. Deep Learning Stream: Wav2Vec 2.0 + ResNet ONNX Neural Net   │
+    │   └── 5. Voice Vault Centroid: Cosine similarity identity matching     │
     └────────────────────────────────────────────────────────────────────────┘
 ```
 
+### 1. Edge Voice Activity Detection (Silence & Noise Filter)
+Rather than blindly uploading continuous audio, the Android capture layer performs real-time micro-amplitude parsing on-device. Dead air, line pauses, and background room hum are discarded before transmission. This reduces network payload by **>60%** and guarantees the backend models only evaluate actual human speech.
+
+### 2. In-Call Audio Pipeline (Accessibility Architecture)
+Modern mobile operating systems strictly sandbox the microphone during active cellular calls. VocalVerify implements an Android Accessibility service combined with `AudioSource.VOICE_RECOGNITION`. This unblocks the audio hardware stream during live calls without triggering aggressive echo-cancellation, allowing caller audio to be captured reliably in real-time.
+
+### 3. Self-Voice Discrimination (Speaker Isolation)
+When the user speaks into their own phone, their voice enters the microphone alongside the remote caller. VocalVerify incorporates an **ECAPA-TDNN** neural embedding filter on incoming audio frames to identify and drop the device owner's voice, ensuring forensic scores reflect only the caller.
+
+### 4. Dual-Stream Multi-Model Ensemble
+- **Acoustic ML Stream (XGBoost):** Extracts 55 spectral features (13 MFCCs with delta/delta-delta statistics, spectral centroid, rolloff, zero-crossing rate, chroma) to detect vocoder artifacts.
+- **Deep Learning Stream (Wav2Vec 2.0 + ResNet ONNX):** Analyzes raw 16 kHz waveforms for latent temporal synthetic anomalies.
+- **Physical Liveness (PLAD):** Gauges involuntary vocal tract micro-tremors (acoustic jitter, shimmer, and breathiness) that text-to-speech engines struggle to reproduce.
+- **Voice Vault Matching:** Compares incoming acoustic embeddings against enrolled voiceprints (e.g. executives, institutional contacts) via centroid cosine similarity.
+
+### 5. Web Audio Live Monitor with Dynamic Compression
+The Next.js dashboard features an integrated real-time audio monitor powered by the browser's Web Audio API. It includes a multi-stage **Dynamics Compressor** with a **300% software gain boost** to clearly project low-volume caller audio alongside a real-time RMS/peak level visualizer.
+
 ---
 
-## 📱 Connecting the Android Mobile Call Guard App
+## 📱 Android Mobile Call Guard App
 
-1. Deploy this Space on Hugging Face (Docker Space).
-2. Note your Space domain: `https://<your-username>-<your-space-name>.hf.space`.
-3. Open the **VocalVerify Call Guard** app on your Android phone.
-4. In the settings field, enter your WebSocket endpoint:
-   ```
-   wss://<your-username>-<your-space-name>.hf.space
-   ```
-5. Tap **Save Hugging Face endpoint**.
-6. When an incoming call arrives, the app streams PCM-16 audio frames to `/ws/telephony/{device_id}` and renders a floating security overlay with the real-time AI impersonation threat score!
+The mobile companion app runs as an unobtrusive background security guard:
+1. **Incoming / Outgoing Call Detection:** Monitors telephony states and automatically initializes the audio stream upon call connection.
+2. **Floating Security HUD:** Displays a non-intrusive floating overlay showing live threat level, synthetic probability, and caller identity verification without interrupting the call.
+3. **Dedicated Repository:** Maintained in the standalone repository [Vocal_Verify_Overlay](https://github.com/ak4204/Vocal_Verify_Overlay).
 
 ---
 
-## 🌐 API Endpoints
+## 🌐 API & WebSocket Reference
 
-- `GET /health` : System and model health check.
-- `POST /api/v1/verify-public-figure` : Multi-modal video/audio cross-verification against public figure baselines or manual reference clips.
-- `POST /api/v1/detect` : One-shot deepfake audio detection.
-- `GET /api/v1/sessions` : Audit log of recent call sessions.
-- `WS /ws/telephony/{device_id}` : High-throughput bi-directional audio stream for telephony devices.
-- `WS /ws/dashboard` : Live event feed for dashboard real-time monitoring.
+| Route | Protocol | Description |
+| :--- | :--- | :--- |
+| `GET /health` | HTTP | Service, model runtime, and environment health check. |
+| `POST /api/v1/detect` | HTTP | One-shot deepfake detection for recorded audio files. |
+| `POST /api/v1/verify-public-figure`| HTTP | Multi-modal cross-verification against enrolled Voice Vault profiles. |
+| `GET /api/v1/sessions` | HTTP | Audit history of recent screened telephony sessions. |
+| `WS /ws/telephony/{device_id}` | WebSocket | High-throughput bi-directional audio stream for mobile devices. |
+| `WS /ws/dashboard` | WebSocket | Real-time event broadcasting channel for the web dashboard. |
+
+---
+
+## 💻 Running Locally
+
+### Prerequisites
+- Python 3.10+
+- Node.js 18+
+- ngrok (optional, for connecting mobile devices outside local Wi-Fi)
+
+### 1. Start the FastAPI Backend
+```bash
+cd backend
+pip install -r requirements.txt
+python -m uvicorn main:app --host 0.0.0.0 --port 8080
+```
+
+### 2. Start the Next.js Dashboard
+```bash
+npm install
+npm run dev
+```
+Access the dashboard at `http://localhost:3000`.
+
+### 3. Expose via ngrok (For Mobile Telephony)
+```bash
+ngrok http 8080
+```
+Enter the resulting forwarding URL (`https://<subdomain>.ngrok-free.app`) into the VocalVerify Call Guard Android app settings.
